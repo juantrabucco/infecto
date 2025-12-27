@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { MonthSchedule, DaySchedule } from './types';
-import { MONTH_NAMES } from './constants';
+import { MONTH_NAMES, DOCTORS } from './constants';
 import { generateSchedule, validateSchedule } from './services/scheduler';
 import { saveSchedule, loadSchedule, exportScheduleAsJSON } from './services/storageService';
+import { exportScheduleAsICS, exportDoctorScheduleAsICS, exportScheduleAsCSV } from './services/calendarExportService';
 import { Sidebar } from './components/Sidebar';
 import { CalendarGrid } from './components/CalendarGrid';
 import { AssignmentModal } from './components/AssignmentModal';
+import { HistoryPanel } from './components/HistoryPanel';
+import html2canvas from 'html2canvas';
 import { 
   RefreshCw, 
   ChevronLeft, 
@@ -13,18 +16,29 @@ import {
   Download, 
   CheckCircle2, 
   XCircle,
-  Sparkles
+  Sparkles,
+  Camera,
+  History,
+  FileText,
+  Calendar as CalendarIcon
 } from 'lucide-react';
 
 function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [monthSchedule, setMonthSchedule] = useState<MonthSchedule | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
   const [selectedDay, setSelectedDay] = useState<DaySchedule | null>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showDoctorExportMenu, setShowDoctorExportMenu] = useState(false);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [validationStatus, setValidationStatus] = useState<{
     isValid: boolean;
     message: string;
   } | null>(null);
+  
+  const calendarRef = useRef<HTMLDivElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   // Cargar cronograma guardado al iniciar
   useEffect(() => {
@@ -33,6 +47,19 @@ function App() {
       setMonthSchedule(saved);
       setCurrentDate(new Date(saved.year, saved.month, 1));
     }
+  }, []);
+
+  // Cerrar menús al hacer click fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setShowExportMenu(false);
+        setShowDoctorExportMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const handleGenerateSchedule = () => {
@@ -89,8 +116,84 @@ function App() {
   };
 
   const handleExport = () => {
+    setShowExportMenu(!showExportMenu);
+  };
+
+  const handleExportICS = () => {
+    if (monthSchedule) {
+      exportScheduleAsICS(monthSchedule);
+      setShowExportMenu(false);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (monthSchedule) {
+      exportScheduleAsCSV(monthSchedule);
+      setShowExportMenu(false);
+    }
+  };
+
+  const handleExportJSON = () => {
     if (monthSchedule) {
       exportScheduleAsJSON(monthSchedule);
+      setShowExportMenu(false);
+    }
+  };
+
+  const handleExportDoctorSchedule = (doctorId: string) => {
+    if (!monthSchedule) return;
+    
+    const doctor = DOCTORS.find(d => d.id === doctorId);
+    if (doctor) {
+      exportDoctorScheduleAsICS(monthSchedule, doctor.id, doctor.name);
+      setShowDoctorExportMenu(false);
+    }
+  };
+
+  const handleLoadFromHistory = (schedule: MonthSchedule) => {
+    setMonthSchedule(schedule);
+    setCurrentDate(new Date(schedule.year, schedule.month, 1));
+    saveSchedule(schedule); // Actualizar cronograma actual
+  };
+
+  const handleCaptureScreenshot = async () => {
+    if (!calendarRef.current || displaySchedule.length === 0) return;
+
+    setIsCapturing(true);
+
+    try {
+      // Esperar un momento para que se actualice el estado visual
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const canvas = await html2canvas(calendarRef.current, {
+        backgroundColor: '#f3f4f6',
+        scale: 2, // Mayor calidad
+        logging: false,
+        useCORS: true,
+        allowTaint: true
+      });
+
+      // Convertir a blob
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+
+        // Crear URL y descargar
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const monthName = MONTH_NAMES[month].toLowerCase();
+        link.href = url;
+        link.download = `infectoplan_${monthName}_${year}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        setIsCapturing(false);
+      }, 'image/png');
+    } catch (error) {
+      console.error('Error capturando pantalla:', error);
+      setIsCapturing(false);
+      alert('Error al capturar la imagen. Por favor, intenta de nuevo.');
     }
   };
 
@@ -144,7 +247,7 @@ function App() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto p-6 space-y-6">
+        <div ref={calendarRef} className="max-w-7xl mx-auto p-6 space-y-6">
           {/* Header con controles */}
           <div className="bg-white rounded-xl shadow-md p-6">
             <div className="flex flex-col md:flex-row items-center justify-between gap-4">
@@ -201,14 +304,148 @@ function App() {
                 </button>
 
                 {displaySchedule.length > 0 && (
-                  <button
-                    onClick={handleExport}
-                    className="flex items-center gap-2 px-4 py-3 rounded-lg font-medium border-2 border-gray-300 hover:bg-gray-50 transition-colors"
-                    title="Exportar cronograma"
-                  >
-                    <Download className="w-5 h-5" />
-                    Exportar
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setShowHistoryPanel(true)}
+                      className="flex items-center gap-2 px-4 py-3 rounded-lg font-medium bg-purple-500 text-white hover:bg-purple-600 transition-colors shadow-sm"
+                      title="Ver historial de cronogramas"
+                    >
+                      <History className="w-5 h-5" />
+                      Historial
+                    </button>
+
+                    <button
+                      onClick={handleCaptureScreenshot}
+                      disabled={isCapturing}
+                      className={`
+                        flex items-center gap-2 px-4 py-3 rounded-lg font-medium
+                        transition-colors shadow-sm
+                        ${isCapturing
+                          ? 'bg-gray-300 cursor-not-allowed'
+                          : 'bg-emerald-500 text-white hover:bg-emerald-600'
+                        }
+                      `}
+                      title="Capturar calendario como imagen"
+                    >
+                      {isCapturing ? (
+                        <>
+                          <RefreshCw className="w-5 h-5 animate-spin" />
+                          Capturando...
+                        </>
+                      ) : (
+                        <>
+                          <Camera className="w-5 h-5" />
+                          Capturar
+                        </>
+                      )}
+                    </button>
+
+                    <div className="relative" ref={exportMenuRef}>
+                      <button
+                        onClick={handleExport}
+                        className="flex items-center gap-2 px-4 py-3 rounded-lg font-medium border-2 border-gray-300 hover:bg-gray-50 transition-colors"
+                        title="Exportar cronograma"
+                      >
+                        <Download className="w-5 h-5" />
+                        Exportar
+                      </button>
+
+                      {/* Menú de exportación */}
+                      {showExportMenu && (
+                        <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-xl border-2 border-gray-200 z-50">
+                          <div className="p-3 bg-gray-50 border-b border-gray-200">
+                            <h3 className="font-semibold text-gray-800">Exportar Cronograma Completo</h3>
+                            <p className="text-xs text-gray-500 mt-1">Todos los médicos y todas las guardias</p>
+                          </div>
+                          
+                          <div className="p-2">
+                            <button
+                              onClick={handleExportICS}
+                              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-accent-50 rounded-lg transition-colors text-left"
+                            >
+                              <CalendarIcon className="w-5 h-5 text-accent-600" />
+                              <div>
+                                <div className="font-medium text-gray-800">.ICS (iCalendar)</div>
+                                <div className="text-xs text-gray-500">Para Google Calendar, Outlook, Apple Calendar</div>
+                              </div>
+                            </button>
+
+                            <button
+                              onClick={handleExportCSV}
+                              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-green-50 rounded-lg transition-colors text-left"
+                            >
+                              <FileText className="w-5 h-5 text-green-600" />
+                              <div>
+                                <div className="font-medium text-gray-800">.CSV (Excel)</div>
+                                <div className="text-xs text-gray-500">Para Excel, Google Sheets, análisis de datos</div>
+                              </div>
+                            </button>
+
+                            <button
+                              onClick={handleExportJSON}
+                              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-blue-50 rounded-lg transition-colors text-left"
+                            >
+                              <FileText className="w-5 h-5 text-blue-600" />
+                              <div>
+                                <div className="font-medium text-gray-800">.JSON (Datos)</div>
+                                <div className="text-xs text-gray-500">Para backup técnico, re-importación</div>
+                              </div>
+                            </button>
+                          </div>
+
+                          <div className="p-3 bg-gray-50 border-t border-gray-200">
+                            <button
+                              onClick={() => {
+                                setShowExportMenu(false);
+                                setShowDoctorExportMenu(true);
+                              }}
+                              className="w-full px-4 py-2 bg-accent-600 text-white rounded-lg font-medium hover:bg-accent-700 transition-colors text-sm"
+                            >
+                              📧 Exportar por Médico Individual
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Menú de exportación por médico */}
+                      {showDoctorExportMenu && (
+                        <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-xl border-2 border-gray-200 z-50">
+                          <div className="p-3 bg-gradient-to-r from-accent-600 to-accent-700">
+                            <h3 className="font-semibold text-white">Exportar por Médico</h3>
+                            <p className="text-xs text-accent-100 mt-1">Solo las guardias de un médico específico</p>
+                          </div>
+                          
+                          <div className="p-2 max-h-96 overflow-y-auto">
+                            {DOCTORS.map(doctor => (
+                              <button
+                                key={doctor.id}
+                                onClick={() => handleExportDoctorSchedule(doctor.id)}
+                                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-accent-50 rounded-lg transition-colors text-left"
+                              >
+                                <div className="w-10 h-10 rounded-full bg-accent-100 flex items-center justify-center font-bold text-accent-700">
+                                  {doctor.name.charAt(0)}
+                                </div>
+                                <div className="flex-1">
+                                  <div className="font-medium text-gray-800">{doctor.name}</div>
+                                  <div className="text-xs text-gray-500">{doctor.specialty}</div>
+                                </div>
+                                <CalendarIcon className="w-4 h-4 text-gray-400" />
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="p-3 bg-gray-50 border-t border-gray-200">
+                            <button
+                              onClick={() => setShowDoctorExportMenu(false)}
+                              className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition-colors text-sm"
+                            >
+                              ← Volver
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -255,6 +492,13 @@ function App() {
           onSave={handleSaveManualEdit}
         />
       )}
+
+      {/* Panel de historial */}
+      <HistoryPanel
+        isOpen={showHistoryPanel}
+        onClose={() => setShowHistoryPanel(false)}
+        onLoadSchedule={handleLoadFromHistory}
+      />
     </div>
   );
 }
