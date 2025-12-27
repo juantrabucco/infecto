@@ -1,5 +1,7 @@
 import { Doctor, DaySchedule, Assignment, AreaType, Constraint, DayOfWeek } from '../types';
-import { DOCTORS, AREAS, INITIAL_CONSTRAINTS, REQUIRED_STAFF_PER_DAY } from '../constants';
+import { AREAS, REQUIRED_STAFF_PER_DAY } from '../constants';
+import { isDoctorOnVacation } from './vacationsService';
+import { loadDoctorsConfig } from './doctorsService';
 
 interface ScoredCandidate {
   doctor: Doctor;
@@ -9,25 +11,45 @@ interface ScoredCandidate {
 /**
  * Motor de Asignación Inteligente - Algoritmo CSP (Constraint Satisfaction Problem)
  * Implementa un sistema de scoring ponderado para resolver restricciones hard y soft
+ * ACTUALIZADO: Considera vacaciones, reglas editables, y configuración personalizada de médicos
  */
-export function generateSchedule(month: number, year: number): DaySchedule[] {
+export function generateSchedule(
+  month: number, 
+  year: number,
+  constraints: Constraint[] = []
+): DaySchedule[] {
+  // IMPORTANTE: Cargar configuración personalizada de médicos
+  const DOCTORS = loadDoctorsConfig();
   const schedule: DaySchedule[] = [];
   const workingDays = getWorkingDaysInMonth(month, year);
   
   // Contador para alternancia de Cristina/Agustina (R1.4)
   let exclusionToggle = 0;
 
+  // Verificar si la regla de exclusión está activa
+  const exclusionRule = constraints.find(c => c.id === 'R1.4');
+  const isExclusionActive = exclusionRule ? exclusionRule.active : true;
+
   for (const date of workingDays) {
     const dayOfWeek = date.getDay() as DayOfWeek;
+    const dateStr = date.toISOString();
     
     // Paso 1: Obtener candidatos disponibles para este día
-    let availableDoctors = DOCTORS.filter(doc => 
-      doc.availableDays.includes(dayOfWeek)
-    );
+    let availableDoctors = DOCTORS.filter(doc => {
+      // Verificar disponibilidad por día de semana
+      if (!doc.availableDays.includes(dayOfWeek)) return false;
+      
+      // Verificar si está de vacaciones (NUEVO)
+      if (isDoctorOnVacation(doc.id, dateStr)) return false;
+      
+      return true;
+    });
 
-    // Paso 2: Aplicar Restricción R1.4 (Exclusión Mutua)
-    availableDoctors = applyExclusionRule(availableDoctors, exclusionToggle);
-    exclusionToggle++;
+    // Paso 2: Aplicar Restricción R1.4 (Exclusión Mutua) solo si está activa
+    if (isExclusionActive) {
+      availableDoctors = applyExclusionRule(availableDoctors, exclusionToggle);
+      exclusionToggle++;
+    }
 
     // Paso 3: Asignar por área en orden de prioridad
     const assignments: Assignment[] = [];
@@ -46,7 +68,7 @@ export function generateSchedule(month: number, year: number): DaySchedule[] {
       // Calcular score para cada candidato
       const scoredCandidates: ScoredCandidate[] = candidates.map(doc => ({
         doctor: doc,
-        score: calculateScore(doc, area, INITIAL_CONSTRAINTS)
+        score: calculateScore(doc, area, constraints)
       }));
 
       // Ordenar por score descendente
@@ -63,11 +85,15 @@ export function generateSchedule(month: number, year: number): DaySchedule[] {
       usedDoctorIds.add(bestCandidate.doctor.id);
     }
 
+    // CAMBIADO: Ya no es obligatorio tener 3 profesionales
+    // isComplete ahora es una recomendación, no un requisito
+    const recommendedStaff = REQUIRED_STAFF_PER_DAY;
+    
     schedule.push({
-      date: date.toISOString(),
+      date: dateStr,
       dayOfWeek: dayOfWeek,
       assignments: assignments,
-      isComplete: assignments.length === REQUIRED_STAFF_PER_DAY
+      isComplete: assignments.length >= recommendedStaff
     });
   }
 
@@ -94,6 +120,7 @@ function applyExclusionRule(doctors: Doctor[], toggleCounter: number): Doctor[] 
 /**
  * Sistema de Scoring para Soft Constraints
  * Calcula la "aptitud" de un médico para un área específica
+ * ACTUALIZADO: Usa constraints pasadas como parámetro
  */
 function calculateScore(
   doctor: Doctor,
@@ -163,6 +190,7 @@ function getWorkingDaysInMonth(month: number, year: number): Date[] {
 /**
  * Valida un cronograma completo contra todas las restricciones
  * Retorna un reporte de violaciones
+ * ACTUALIZADO: R1.3 ya no es obligatorio
  */
 export interface ValidationReport {
   isValid: boolean;
@@ -170,32 +198,48 @@ export interface ValidationReport {
   warnings: string[];
 }
 
-export function validateSchedule(schedule: DaySchedule[]): ValidationReport {
+export function validateSchedule(
+  schedule: DaySchedule[],
+  constraints: Constraint[] = []
+): ValidationReport {
   const errors: string[] = [];
   const warnings: string[] = [];
+
+  // Verificar si la regla de exclusión está activa
+  const exclusionRule = constraints.find(c => c.id === 'R1.4');
+  const isExclusionActive = exclusionRule ? exclusionRule.active : true;
+
+  // Verificar si la regla de capacidad está activa
+  const capacityRule = constraints.find(c => c.id === 'R1.3');
+  const isCapacityActive = capacityRule ? capacityRule.active : false;
 
   for (const day of schedule) {
     const date = new Date(day.date);
     const dateStr = date.toLocaleDateString('es-AR');
 
-    // Validar R1.3: 3 profesionales por día
-    if (day.assignments.length < REQUIRED_STAFF_PER_DAY) {
-      errors.push(`${dateStr}: Solo ${day.assignments.length} profesionales asignados (se requieren ${REQUIRED_STAFF_PER_DAY})`);
+    // Validar R1.3: 3 profesionales por día (ahora es SOFT, solo advertencia)
+    if (isCapacityActive && day.assignments.length < REQUIRED_STAFF_PER_DAY) {
+      warnings.push(`${dateStr}: Solo ${day.assignments.length} profesionales asignados (se recomiendan ${REQUIRED_STAFF_PER_DAY})`);
     }
 
-    // Validar R1.4: Cristina y Agustina no juntas
-    const hasCristina = day.assignments.some(a => a.doctorId === 'cristina');
-    const hasAgustina = day.assignments.some(a => a.doctorId === 'agustina');
-    if (hasCristina && hasAgustina) {
-      errors.push(`${dateStr}: VIOLACIÓN R1.4 - Cristina y Agustina asignadas el mismo día`);
+    // Validar R1.4: Cristina y Agustina no juntas (solo si está activa)
+    if (isExclusionActive) {
+      const hasCristina = day.assignments.some(a => a.doctorId === 'cristina');
+      const hasAgustina = day.assignments.some(a => a.doctorId === 'agustina');
+      if (hasCristina && hasAgustina) {
+        errors.push(`${dateStr}: VIOLACIÓN R1.4 - Cristina y Agustina asignadas el mismo día`);
+      }
     }
 
     // Advertir si Agustina está en Unidades Cerradas
-    const agustinaInUC = day.assignments.some(
-      a => a.doctorId === 'agustina' && a.area === 'Unidades Cerradas'
-    );
-    if (agustinaInUC) {
-      warnings.push(`${dateStr}: Agustina asignada a Unidades Cerradas (no preferido)`);
+    const r33 = constraints.find(c => c.id === 'R3.3');
+    if (r33?.active) {
+      const agustinaInUC = day.assignments.some(
+        a => a.doctorId === 'agustina' && a.area === 'Unidades Cerradas'
+      );
+      if (agustinaInUC) {
+        warnings.push(`${dateStr}: Agustina asignada a Unidades Cerradas (no preferido)`);
+      }
     }
   }
 

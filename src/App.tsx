@@ -1,13 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
-import { MonthSchedule, DaySchedule } from './types';
-import { MONTH_NAMES, DOCTORS } from './constants';
+import { MonthSchedule, DaySchedule, Constraint, Doctor } from './types';
+import { MONTH_NAMES } from './constants';
 import { generateSchedule, validateSchedule } from './services/scheduler';
-import { saveSchedule, loadSchedule, exportScheduleAsJSON } from './services/storageService';
+import { saveSchedule, loadSchedule, exportScheduleAsJSON, loadConstraints } from './services/storageService';
 import { exportScheduleAsICS, exportDoctorScheduleAsICS, exportScheduleAsCSV } from './services/calendarExportService';
+import { loadDoctorsConfig } from './services/doctorsService';
 import { Sidebar } from './components/Sidebar';
 import { CalendarGrid } from './components/CalendarGrid';
 import { AssignmentModal } from './components/AssignmentModal';
 import { HistoryPanel } from './components/HistoryPanel';
+import { RulesManager } from './components/RulesManager';
+import { DoctorsManager } from './components/DoctorsManager';
+import { VacationsManager } from './components/VacationsManager';
 import html2canvas from 'html2canvas';
 import { 
   RefreshCw, 
@@ -20,7 +24,10 @@ import {
   Camera,
   History,
   FileText,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  Settings,
+  Users,
+  Plane
 } from 'lucide-react';
 
 function App() {
@@ -32,6 +39,11 @@ function App() {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showDoctorExportMenu, setShowDoctorExportMenu] = useState(false);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [showRulesManager, setShowRulesManager] = useState(false);
+  const [showDoctorsManager, setShowDoctorsManager] = useState(false);
+  const [showVacationsManager, setShowVacationsManager] = useState(false);
+  const [constraints, setConstraints] = useState<Constraint[]>([]);
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [validationStatus, setValidationStatus] = useState<{
     isValid: boolean;
     message: string;
@@ -47,6 +59,11 @@ function App() {
       setMonthSchedule(saved);
       setCurrentDate(new Date(saved.year, saved.month, 1));
     }
+    
+    // Cargar constraints y doctors
+    const loadedConstraints = loadConstraints();
+    setConstraints(loadedConstraints || []);
+    setDoctors(loadDoctorsConfig());
   }, []);
 
   // Cerrar menús al hacer click fuera
@@ -71,7 +88,8 @@ function App() {
       const month = currentDate.getMonth();
       const year = currentDate.getFullYear();
 
-      const schedule = generateSchedule(month, year);
+      // Generar con constraints actuales
+      const schedule = generateSchedule(month, year, constraints);
       
       const newMonthSchedule: MonthSchedule = {
         month,
@@ -83,8 +101,8 @@ function App() {
       setMonthSchedule(newMonthSchedule);
       saveSchedule(newMonthSchedule);
 
-      // Validar
-      const validation = validateSchedule(schedule);
+      // Validar con constraints actuales
+      const validation = validateSchedule(schedule, constraints);
       setValidationStatus({
         isValid: validation.isValid,
         message: validation.isValid 
@@ -143,7 +161,7 @@ function App() {
   const handleExportDoctorSchedule = (doctorId: string) => {
     if (!monthSchedule) return;
     
-    const doctor = DOCTORS.find(d => d.id === doctorId);
+    const doctor = doctors.find(d => d.id === doctorId);
     if (doctor) {
       exportDoctorScheduleAsICS(monthSchedule, doctor.id, doctor.name);
       setShowDoctorExportMenu(false);
@@ -154,6 +172,14 @@ function App() {
     setMonthSchedule(schedule);
     setCurrentDate(new Date(schedule.year, schedule.month, 1));
     saveSchedule(schedule); // Actualizar cronograma actual
+  };
+
+  const handleRulesChange = (newConstraints: Constraint[]) => {
+    setConstraints(newConstraints);
+  };
+
+  const handleDoctorsChange = (newDoctors: Doctor[]) => {
+    setDoctors(newDoctors);
   };
 
   const handleCaptureScreenshot = async () => {
@@ -224,8 +250,8 @@ function App() {
     saveSchedule(updatedSchedule);
     setSelectedDay(null);
 
-    // Re-validar
-    const validation = validateSchedule(updatedDays);
+    // Re-validar con constraints actuales
+    const validation = validateSchedule(updatedDays, constraints);
     setValidationStatus({
       isValid: validation.isValid,
       message: validation.isValid 
@@ -277,7 +303,36 @@ function App() {
               </div>
 
               {/* Botones de acción */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* Botones de gestión */}
+                <button
+                  onClick={() => setShowDoctorsManager(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500 text-white hover:bg-purple-600 transition-colors font-medium text-sm"
+                  title="Gestionar médicos"
+                >
+                  <Users className="w-4 h-4" />
+                  Médicos
+                </button>
+
+                <button
+                  onClick={() => setShowVacationsManager(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors font-medium text-sm"
+                  title="Gestionar vacaciones"
+                >
+                  <Plane className="w-4 h-4" />
+                  Vacaciones
+                </button>
+
+                <button
+                  onClick={() => setShowRulesManager(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-500 text-white hover:bg-indigo-600 transition-colors font-medium text-sm"
+                  title="Gestionar reglas"
+                >
+                  <Settings className="w-4 h-4" />
+                  Reglas
+                </button>
+
+                {/* Botón principal */}
                 <button
                   onClick={handleGenerateSchedule}
                   disabled={isProcessing}
@@ -416,7 +471,7 @@ function App() {
                           </div>
                           
                           <div className="p-2 max-h-96 overflow-y-auto">
-                            {DOCTORS.map(doctor => (
+                            {doctors.map(doctor => (
                               <button
                                 key={doctor.id}
                                 onClick={() => handleExportDoctorSchedule(doctor.id)}
@@ -498,6 +553,28 @@ function App() {
         isOpen={showHistoryPanel}
         onClose={() => setShowHistoryPanel(false)}
         onLoadSchedule={handleLoadFromHistory}
+      />
+
+      {/* Gestión de Reglas */}
+      <RulesManager
+        isOpen={showRulesManager}
+        onClose={() => setShowRulesManager(false)}
+        onRulesChange={handleRulesChange}
+      />
+
+      {/* Gestión de Médicos */}
+      <DoctorsManager
+        isOpen={showDoctorsManager}
+        onClose={() => setShowDoctorsManager(false)}
+        onDoctorsChange={handleDoctorsChange}
+      />
+
+      {/* Gestión de Vacaciones */}
+      <VacationsManager
+        isOpen={showVacationsManager}
+        onClose={() => setShowVacationsManager(false)}
+        currentMonth={month}
+        currentYear={year}
       />
     </div>
   );

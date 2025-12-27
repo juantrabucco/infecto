@@ -29,6 +29,16 @@ export interface Constraint {
   description: string;
   weight?: number;
   active: boolean;
+  editable?: boolean; // Si se puede desactivar/editar
+}
+
+export interface Vacation {
+  id: string;
+  doctorId: string;
+  doctorName: string;
+  startDate: string; // ISO format
+  endDate: string;   // ISO format
+  reason?: string;
 }
 
 export interface MonthSchedule {

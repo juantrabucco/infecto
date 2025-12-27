@@ -42,17 +42,20 @@ export const AREAS: AreaType[] = [
 export const INITIAL_CONSTRAINTS: Constraint[] = [
   {
     id: 'R1.3',
-    type: 'HARD',
-    name: 'Capacidad Diaria',
-    description: 'Cada día debe tener exactamente 3 profesionales asignados',
-    active: true
+    type: 'SOFT', // Cambiado de HARD a SOFT
+    name: 'Capacidad Diaria Recomendada',
+    description: 'Se recomienda cubrir 3 profesionales por día (ahora opcional)',
+    weight: 50, // Añadido peso
+    active: true,
+    editable: true // Puede desactivarse
   },
   {
     id: 'R1.4',
     type: 'HARD',
     name: 'Exclusión Mutua Cristina/Agustina',
     description: 'Cristina y Agustina nunca pueden trabajar el mismo día',
-    active: true
+    active: true,
+    editable: true // Puede desactivarse si la situación cambia
   },
   {
     id: 'R3.1',
@@ -60,7 +63,8 @@ export const INITIAL_CONSTRAINTS: Constraint[] = [
     name: 'Cristina prioritaria en Pueyrredón',
     description: 'Cristina debe asignarse preferentemente a Piso Pueyrredón',
     weight: 100,
-    active: true
+    active: true,
+    editable: true
   },
   {
     id: 'R3.2',
@@ -68,7 +72,8 @@ export const INITIAL_CONSTRAINTS: Constraint[] = [
     name: 'Natalia/Leticia prioritarias en Juncal',
     description: 'Natalia y Leticia deben asignarse preferentemente a Sector Juncal',
     weight: 100,
-    active: true
+    active: true,
+    editable: true
   },
   {
     id: 'R3.3',
@@ -76,7 +81,8 @@ export const INITIAL_CONSTRAINTS: Constraint[] = [
     name: 'Agustina evita Unidades Cerradas',
     description: 'Agustina debe evitar Unidades Cerradas excepto cuando no hay alternativas',
     weight: -50,
-    active: true
+    active: true,
+    editable: true
   },
   {
     id: 'R3.4',
@@ -84,7 +90,8 @@ export const INITIAL_CONSTRAINTS: Constraint[] = [
     name: 'Bonus por Especialidad',
     description: 'Preferir asignar médicos cuya especialidad coincida con el área',
     weight: 10,
-    active: true
+    active: true,
+    editable: true
   }
 ];
 
@@ -95,5 +102,5 @@ export const MONTH_NAMES = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
 ];
 
-export const REQUIRED_STAFF_PER_DAY = 3;
+export const REQUIRED_STAFF_PER_DAY = 3; // Ahora es solo una recomendación, no obligatorio
 
